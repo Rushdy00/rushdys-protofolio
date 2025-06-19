@@ -11,6 +11,7 @@ import {
   SiHtml5, 
   SiCss3 
 } from "react-icons/si";
+import FluidGlass from "./FluidGlass";
 
 const technologies = [
   { name: "Python", icon: SiPython, color: "#3776AB" },
@@ -168,6 +169,60 @@ export function TechStack() {
           })}
         </motion.div>
       </div>
+
+      {/* FluidGlass Full Screen 3D Interactive Section */}
+      <motion.div
+        initial={{ opacity: 0 }}
+        whileInView={{ opacity: 1 }}
+        viewport={{ once: true }}
+        transition={{ duration: 1, delay: 0.3 }}
+        className="mt-20 w-full"
+      >
+        
+        {/* Full screen FluidGlass */}
+        <div className="relative w-full h-screen min-h-[100vh] overflow-hidden bg-black">
+          
+                      <FluidGlass 
+              mode="lens"
+              lensProps={{
+                scale: 0.25,
+                ior: 1.15,
+                thickness: 5,
+                chromaticAberration: 0.02,
+                anisotropy: 0.01,
+                navItems: [
+                  { label: "Skills", link: "#skills" },
+                  { label: "Projects", link: "#projects" },
+                  { label: "Experience", link: "#experience" },
+                  { label: "Contact", link: "#contact" },
+                ]
+              }}
+            />
+          
+          {/* Scroll indicator */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 2, duration: 1 }}
+            className="absolute bottom-8 left-1/2 transform -translate-x-1/2 text-white/60 text-center"
+          >
+            <div className="flex flex-col items-center gap-2">
+              <span className="text-sm font-medium tracking-wider uppercase">Scroll to explore</span>
+              <motion.div
+                animate={{ y: [0, 8, 0] }}
+                transition={{ duration: 2, repeat: Infinity }}
+                className="w-6 h-10 border-2 border-white/30 rounded-full flex justify-center"
+              >
+                <motion.div
+                  animate={{ y: [0, 12, 0] }}
+                  transition={{ duration: 2, repeat: Infinity }}
+                  className="w-1 h-3 bg-white/60 rounded-full mt-2"
+                />
+              </motion.div>
+            </div>
+          </motion.div>
+        </div>
+      </motion.div>
     </div>
   );
 } 
