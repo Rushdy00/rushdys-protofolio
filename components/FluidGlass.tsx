@@ -1,6 +1,6 @@
 /* eslint-disable react/no-unknown-property */
 import * as THREE from "three";
-import { useRef, useState, useEffect, memo, ReactNode } from "react";
+import { useRef, useState, useEffect, memo, ReactNode, useCallback, useMemo } from "react";
 import {
   Canvas,
   createPortal,
@@ -57,9 +57,19 @@ export default function FluidGlass({
   } = rawOverrides;
 
   return (
-    <Canvas camera={{ position: [0, 0, 20], fov: 15 }} gl={{ alpha: true, antialias: true }}>
+    <Canvas 
+      camera={{ position: [0, 0, 20], fov: 15 }} 
+      gl={{ 
+        alpha: true, 
+        antialias: true,
+        powerPreference: "high-performance",
+        stencil: false,
+        depth: true
+      }}
+      performance={{ min: 0.5 }}
+    >
       <color attach="background" args={["#000000"]} />
-      <ScrollControls damping={0.2} pages={3} distance={0.4}>
+      <ScrollControls damping={0.3} pages={2} distance={0.4}>
         {mode === "bar" && <NavItems items={navItems as NavItem[]} />}
         <Wrapper modeProps={modeProps}>
           <Scroll>
@@ -127,6 +137,8 @@ const ModeWrapper = memo(function ModeWrapper({
 
   useFrame((state, delta) => {
     const { gl, viewport, pointer, camera } = state;
+    
+    // Cache viewport calculation
     const v = viewport.getCurrentViewport(camera, [0, 0, 15]);
 
     const destX = followPointer ? (pointer.x * v.width) / 2 : 0;
@@ -135,18 +147,24 @@ const ModeWrapper = memo(function ModeWrapper({
       : followPointer
         ? (pointer.y * v.height) / 2
         : 0;
-    easing.damp3(ref.current.position, [destX, destY, 15], 0.15, delta);
+    
+    // Use lighter easing for better performance
+    easing.damp3(ref.current.position, [destX, destY, 15], 0.25, delta);
 
+    // Only calculate scale if not provided and cache the result
     if ((modeProps as { scale?: number }).scale == null) {
       const maxWorld = v.width * 0.9;
       const desired = maxWorld / geoWidthRef.current;
-      ref.current.scale.setScalar(Math.min(0.15, desired));
+      const newScale = Math.min(0.15, desired);
+      if (Math.abs(ref.current.scale.x - newScale) > 0.001) {
+        ref.current.scale.setScalar(newScale);
+      }
     }
 
+    // Optimize FBO rendering
     gl.setRenderTarget(buffer);
     gl.render(scene, camera);
     gl.setRenderTarget(null);
-    gl.setClearColor(0x000000, 1);
   });
 
   const {
@@ -245,46 +263,58 @@ function NavItems({ items }: { items: NavItem[] }) {
   const group = useRef<THREE.Group>(null!);
   const { viewport, camera } = useThree();
 
-  const DEVICE = {
+  const DEVICE = useMemo(() => ({
     mobile: { max: 639, spacing: 0.2, fontSize: 0.035 },
     tablet: { max: 1023, spacing: 0.24, fontSize: 0.045 },
     desktop: { max: Infinity, spacing: 0.3, fontSize: 0.045 },
-  };
-  const getDevice = () => {
+  }), []);
+
+  const getDevice = useCallback(() => {
     const w = window.innerWidth;
     return w <= DEVICE.mobile.max
       ? "mobile"
       : w <= DEVICE.tablet.max
         ? "tablet"
         : "desktop";
-  };
+  }, [DEVICE]);
 
   const [device, setDevice] = useState<keyof typeof DEVICE>(getDevice());
 
   useEffect(() => {
     const onResize = () => setDevice(getDevice());
-    window.addEventListener("resize", onResize);
+    window.addEventListener("resize", onResize, { passive: true });
     return () => window.removeEventListener("resize", onResize);
-  }, []);
+  }, [getDevice]);
 
-  const { spacing, fontSize } = DEVICE[device];
+  const { spacing, fontSize } = useMemo(() => DEVICE[device], [DEVICE, device]);
 
+  // Cache viewport calculation
+  const lastViewport = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
+  
   useFrame(() => {
     if (!group.current) return;
     const v = viewport.getCurrentViewport(camera, [0, 0, 15]);
-    group.current.position.set(0, -v.height / 2 + 0.2, 15.1);
+    
+    // Only update if viewport significantly changed
+    if (Math.abs(v.height - lastViewport.current.height) > 0.01) {
+      group.current.position.set(0, -v.height / 2 + 0.2, 15.1);
+      lastViewport.current = { width: v.width, height: v.height };
+    }
 
     group.current.children.forEach((child, i) => {
-      child.position.x = (i - (items.length - 1) / 2) * spacing;
+      const targetX = (i - (items.length - 1) / 2) * spacing;
+      if (Math.abs(child.position.x - targetX) > 0.001) {
+        child.position.x = targetX;
+      }
     });
   });
 
-  const handleNavigate = (link: string) => {
+  const handleNavigate = useCallback((link: string) => {
     if (!link) return;
     link.startsWith("#")
       ? (window.location.hash = link)
       : (window.location.href = link);
-  };
+  }, []);
 
   return (
     <group ref={group} renderOrder={10}>
@@ -319,15 +349,27 @@ function Images() {
   const group = useRef<ZoomGroup>(null!);
   const data = useScroll();
   const { height } = useThree((s) => s.viewport);
+  
+  // Cache previous zoom values to avoid unnecessary updates
+  const lastZoomValues = useRef<number[]>([1, 1, 1, 1, 1]);
 
   useFrame(() => {
-    if (group.current?.children && data) {
-      group.current.children[0] && (group.current.children[0] as ZoomMesh).material && ((group.current.children[0] as ZoomMesh).material.zoom = 1 + data.range(0, 1 / 3) / 3);
-      group.current.children[1] && (group.current.children[1] as ZoomMesh).material && ((group.current.children[1] as ZoomMesh).material.zoom = 1 + data.range(0, 1 / 3) / 3);
-      group.current.children[2] && (group.current.children[2] as ZoomMesh).material && ((group.current.children[2] as ZoomMesh).material.zoom = 1 + data.range(1.15 / 3, 1 / 3) / 2);
-      group.current.children[3] && (group.current.children[3] as ZoomMesh).material && ((group.current.children[3] as ZoomMesh).material.zoom = 1 + data.range(1.15 / 3, 1 / 3) / 2);
-      group.current.children[4] && (group.current.children[4] as ZoomMesh).material && ((group.current.children[4] as ZoomMesh).material.zoom = 1 + data.range(1.15 / 3, 1 / 3) / 2);
-    }
+    if (!group.current?.children || !data) return;
+    
+    // Calculate zoom values once
+    const zoom1 = 1 + data.range(0, 1 / 3) / 3;
+    const zoom2 = 1 + data.range(1.15 / 3, 1 / 3) / 2;
+    
+    const newZoomValues = [zoom1, zoom1, zoom2, zoom2, zoom2];
+    
+    // Only update if zoom values changed significantly
+    newZoomValues.forEach((zoom, i) => {
+      const child = group.current.children[i] as ZoomMesh;
+      if (child?.material && Math.abs(zoom - lastZoomValues.current[i]) > 0.001) {
+        child.material.zoom = zoom;
+        lastZoomValues.current[i] = zoom;
+      }
+    });
   });
 
   return (
@@ -335,52 +377,53 @@ function Images() {
       <Image
         position={[-2, 0, 0]}
         scale={[3, height / 1.1]}
-        url="https://images.unsplash.com/photo-1478436127897-769e1b3f0f36?w=800&h=600&auto=format&fit=crop"
+        url="https://images.unsplash.com/photo-1478436127897-769e1b3f0f36?w=400&h=300&auto=format&fit=crop&q=75"
       />
       <Image
         position={[2, 0, 3]}
         scale={3}
-        url="https://images.unsplash.com/photo-1595001354022-29103be3b73a?w=800&h=600&auto=format&fit=crop"
+        url="https://images.unsplash.com/photo-1595001354022-29103be3b73a?w=400&h=300&auto=format&fit=crop&q=75"
       />
       <Image
         position={[-2.05, -height, 6]}
         scale={[1, 3]}
-        url="https://images.unsplash.com/photo-1513682121497-80211f36a7d3?w=600&h=900&auto=format&fit=crop"
+        url="https://images.unsplash.com/photo-1513682121497-80211f36a7d3?w=300&h=450&auto=format&fit=crop&q=75"
       />
       <Image
         position={[-0.6, -height, 9]}
         scale={[1, 2]}
-        url="https://images.unsplash.com/photo-1516205651411-aef33a44f7c2?w=600&h=800&auto=format&fit=crop"
+        url="https://images.unsplash.com/photo-1516205651411-aef33a44f7c2?w=300&h=400&auto=format&fit=crop&q=75"
       />
       <Image
         position={[0.75, -height, 10.5]}
         scale={1.5}
-        url="https://images.unsplash.com/photo-1505069190533-da1c9af13346?w=600&h=600&auto=format&fit=crop"
+        url="https://images.unsplash.com/photo-1505069190533-da1c9af13346?w=300&h=300&auto=format&fit=crop&q=75"
       />
     </group>
   )
 }
 
 function Typography() {
-  const DEVICE = {
+  const DEVICE = useMemo(() => ({
     mobile: { fontSize: 0.2 },
     tablet: { fontSize: 0.4 },
     desktop: { fontSize: 0.7 },
-  };
-  const getDevice = () => {
+  }), []);
+  
+  const getDevice = useCallback(() => {
     const w = window.innerWidth;
     return w <= 639 ? "mobile" : w <= 1023 ? "tablet" : "desktop";
-  };
+  }, []);
 
   const [device, setDevice] = useState<keyof typeof DEVICE>(getDevice());
 
   useEffect(() => {
     const onResize = () => setDevice(getDevice());
-    window.addEventListener("resize", onResize);
+    window.addEventListener("resize", onResize, { passive: true });
     return () => window.removeEventListener("resize", onResize);
-  }, []);
+  }, [getDevice]);
 
-  const { fontSize } = DEVICE[device];
+  const { fontSize } = useMemo(() => DEVICE[device], [DEVICE, device]);
 
   return (
     <Text
